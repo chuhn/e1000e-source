@@ -1,16 +1,17 @@
 Source: e1000e
 Section: unknown
 Priority: optional
-Maintainer: Christopher Huhn <c.huhn@gsi.de>
-Build-Depends: debhelper (>= 5)
-Standards-Version: 3.7.2
+Maintainer: Christopher Huhn <C.Huhn@gsi.de>
+Build-Depends: debhelper (>= 7)
+Standards-Version: 3.9.5
 
 Package: e1000e-module-_KVERS_
 Architecture: any
 Provides: e1000e-module
+Depends: linux-image-_KVERS_
 Description: e1000e modules for Linux (kernel _KVERS_).
- This package contains the set of loadable kernel modules for the
- <description>.
+ This package contains a newer e1000e kernel module for
+ Intel network interfaces.
  .
  This package contains the compiled kernel modules for _KVERS_
  .

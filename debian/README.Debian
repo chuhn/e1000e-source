@@ -1,12 +1,8 @@
 e1000e for Debian
 -----------------
 
-Please see ./README for a description of the e1000e software.
-
-The Debian e1000e source package provides two packages,
-
- 1) e1000e, which the provides the userspace daemon
- 2) e1000e-source, which provides the source for the kernel modules
+This package provides the e1000e kernel module in newer versions
+than in the stock Debian kernels.
 
 The e1000e-source package can be used in several ways,
 

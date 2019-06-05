@@ -1,40 +1,15 @@
-/*******************************************************************************
-
-  Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2011 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
-  Contact Information:
-  Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-
-*******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 1999 - 2018 Intel Corporation. */
 
 #include <linux/netdevice.h>
+#include <linux/module.h>
+#include <linux/pci.h>
 
 #include "e1000.h"
 
-/*
- * This is the only thing that needs to be changed to adjust the
+/* This is the only thing that needs to be changed to adjust the
  * maximum number of ports that the driver can manage.
  */
-
 #define E1000_MAX_NIC 32
 
 #define OPTION_UNSET   -1
@@ -45,14 +20,12 @@
 unsigned int copybreak = COPYBREAK_DEFAULT;
 module_param(copybreak, uint, 0644);
 MODULE_PARM_DESC(copybreak,
-	"Maximum size of packet that is copied to a new buffer on receive");
+		 "Maximum size of packet that is copied to a new buffer on receive");
 
-/*
- * All parameters are treated the same, as an integer array of values.
+/* All parameters are treated the same, as an integer array of values.
  * This macro just reduces the need to repeat the same declaration code
  * over and over (plus this helps to avoid typo bugs).
  */
-
 #define E1000_PARAM_INIT { [0 ... E1000_MAX_NIC] = OPTION_UNSET }
 #ifndef module_param_array
 /* Module Parameters are always initialized to -1, so that the driver
@@ -65,21 +38,26 @@ MODULE_PARM_DESC(copybreak,
  * "Extensions to the C Language Family" of the GCC documentation.
  */
 #define E1000_PARAM(X, desc) \
-	static const int __devinitdata X[E1000_MAX_NIC+1] = E1000_PARAM_INIT; \
+	static const int X[E1000_MAX_NIC+1] __devinitconst = E1000_PARAM_INIT; \
 	static unsigned int num_##X;				 \
 	MODULE_PARM(X, "1-" __MODULE_STRING(E1000_MAX_NIC) "i"); \
 	MODULE_PARM_DESC(X, desc);
+#elif defined(HAVE_CONFIG_HOTPLUG)
+#define E1000_PARAM(X, desc)					\
+	static int X[E1000_MAX_NIC+1] __devinitdata		\
+		= E1000_PARAM_INIT;				\
+	static unsigned int num_##X;				\
+	module_param_array_named(X, X, int, &num_##X, 0);	\
+	MODULE_PARM_DESC(X, desc);
 #else
 #define E1000_PARAM(X, desc)					\
-	static int __devinitdata X[E1000_MAX_NIC+1]		\
-		= E1000_PARAM_INIT;				\
+	static int X[E1000_MAX_NIC+1] = E1000_PARAM_INIT;	\
 	static unsigned int num_##X;				\
 	module_param_array_named(X, X, int, &num_##X, 0);	\
 	MODULE_PARM_DESC(X, desc);
 #endif
 
-/*
- * Transmit Interrupt Delay in units of 1.024 microseconds
+/* Transmit Interrupt Delay in units of 1.024 microseconds
  * Tx interrupt delay needs to typically be set to something non-zero
  *
  * Valid Range: 0-65535
@@ -89,8 +67,7 @@ E1000_PARAM(TxIntDelay, "Transmit Interrupt Delay");
 #define MAX_TXDELAY 0xFFFF
 #define MIN_TXDELAY 0
 
-/*
- * Transmit Absolute Interrupt Delay in units of 1.024 microseconds
+/* Transmit Absolute Interrupt Delay in units of 1.024 microseconds
  *
  * Valid Range: 0-65535
  */
@@ -99,8 +76,7 @@ E1000_PARAM(TxAbsIntDelay, "Transmit Absolute Interrupt Delay");
 #define MAX_TXABSDELAY 0xFFFF
 #define MIN_TXABSDELAY 0
 
-/*
- * Receive Interrupt Delay in units of 1.024 microseconds
+/* Receive Interrupt Delay in units of 1.024 microseconds
  * hardware will likely hang if you set this to anything but zero.
  *
  * Valid Range: 0-65535
@@ -109,8 +85,7 @@ E1000_PARAM(RxIntDelay, "Receive Interrupt Delay");
 #define MAX_RXDELAY 0xFFFF
 #define MIN_RXDELAY 0
 
-/*
- * Receive Absolute Interrupt Delay in units of 1.024 microseconds
+/* Receive Absolute Interrupt Delay in units of 1.024 microseconds
  *
  * Valid Range: 0-65535
  */
@@ -118,30 +93,34 @@ E1000_PARAM(RxAbsIntDelay, "Receive Absolute Interrupt Delay");
 #define MAX_RXABSDELAY 0xFFFF
 #define MIN_RXABSDELAY 0
 
-/*
- * Interrupt Throttle Rate (interrupts/sec)
+/* Interrupt Throttle Rate (interrupts/sec)
  *
- * Valid Range: 100-100000 (0=off, 1=dynamic, 3=dynamic conservative)
+ * Valid Range: 100-100000 or one of: 0=off, 1=dynamic, 3=dynamic conservative
  */
 E1000_PARAM(InterruptThrottleRate, "Interrupt Throttling Rate");
 #define DEFAULT_ITR 3
 #define MAX_ITR 100000
 #define MIN_ITR 100
 
-#ifdef CONFIG_E1000E_MSIX
 /* IntMode (Interrupt Mode)
  *
- * Valid Range: 0 - 2
+ * Valid Range: varies depending on kernel configuration & hardware support
  *
- * Default Value: 2 (MSI-X)
+ * legacy=0, MSI=1, MSI-X=2
+ *
+ * When MSI/MSI-X support is enabled in kernel-
+ *   Default Value: 2 (MSI-X) when supported by hardware, 1 (MSI) otherwise
+ * When MSI/MSI-X support is not enabled in kernel-
+ *   Default Value: 0 (legacy)
+ *
+ * When a mode is specified that is not allowed/supported, it will be
+ * demoted to the most advanced interrupt mode available.
  */
 E1000_PARAM(IntMode, "Interrupt Mode");
 #define MAX_INTMODE	2
 #define MIN_INTMODE	0
 
-#endif /* CONFIG_E1000E_MSIX */
-/*
- * Enable Smart Power Down of the PHY
+/* Enable Smart Power Down of the PHY
  *
  * Valid Range: 0, 1
  *
@@ -149,8 +128,7 @@ E1000_PARAM(IntMode, "Interrupt Mode");
  */
 E1000_PARAM(SmartPowerDownEnable, "Enable PHY smart power down");
 
-/*
- * Enable Kumeran Lock Loss workaround
+/* Enable Kumeran Lock Loss workaround
  *
  * Valid Range: 0, 1
  *
@@ -158,18 +136,16 @@ E1000_PARAM(SmartPowerDownEnable, "Enable PHY smart power down");
  */
 E1000_PARAM(KumeranLockLoss, "Enable Kumeran lock loss workaround");
 
-/*
- * Enable CRC Stripping
+/* Enable CRC Stripping
  *
  * Valid Range: 0, 1
  *
  * Default Value: 1 (enabled)
  */
-E1000_PARAM(CrcStripping, "Enable CRC Stripping, disable if your BMC needs " \
-                          "the CRC");
+E1000_PARAM(CrcStripping,
+	    "Enable CRC Stripping, disable if your BMC needs the CRC");
 
-/*
- * Enable/disable EEE (a.k.a. IEEE802.3az)
+/* Enable/disable EEE (a.k.a. IEEE802.3az)
  *
  * Valid Range: 0, 1
  *
@@ -194,20 +170,31 @@ struct e1000_option {
 	const char *err;
 	int def;
 	union {
-		struct { /* range_option info */
+		/* range_option info */
+		struct {
 			int min;
 			int max;
 		} r;
-		struct { /* list_option info */
+		/* list_option info */
+		struct {
 			int nr;
-			struct e1000_opt_list { int i; char *str; } *p;
+			struct e1000_opt_list {
+				int i;
+				char *str;
+			} *p;
 		} l;
 	} arg;
 };
 
+#ifdef HAVE_CONFIG_HOTPLUG
 static int __devinit e1000_validate_option(unsigned int *value,
 					   const struct e1000_option *opt,
 					   struct e1000_adapter *adapter)
+#else
+static int e1000_validate_option(unsigned int *value,
+				 const struct e1000_option *opt,
+				 struct e1000_adapter *adapter)
+#endif
 {
 	if (*value == OPTION_UNSET) {
 		*value = opt->def;
@@ -218,16 +205,19 @@ static int __devinit e1000_validate_option(unsigned int *value,
 	case enable_option:
 		switch (*value) {
 		case OPTION_ENABLED:
-			e_info("%s Enabled\n", opt->name);
+			dev_info(pci_dev_to_dev(adapter->pdev), "%s Enabled\n",
+				 opt->name);
 			return 0;
 		case OPTION_DISABLED:
-			e_info("%s Disabled\n", opt->name);
+			dev_info(pci_dev_to_dev(adapter->pdev), "%s Disabled\n",
+				 opt->name);
 			return 0;
 		}
 		break;
 	case range_option:
 		if (*value >= opt->arg.r.min && *value <= opt->arg.r.max) {
-			e_info("%s set to %i\n", opt->name, *value);
+			dev_info(pci_dev_to_dev(adapter->pdev),
+				 "%s set to %i\n", opt->name, *value);
 			return 0;
 		}
 		break;
@@ -239,7 +229,8 @@ static int __devinit e1000_validate_option(unsigned int *value,
 			ent = &opt->arg.l.p[i];
 			if (*value == ent->i) {
 				if (ent->str[0] != '\0')
-					e_info("%s\n", ent->str);
+					dev_info(pci_dev_to_dev(adapter->pdev), "%s\n",
+						 ent->str);
 				return 0;
 			}
 		}
@@ -249,8 +240,9 @@ static int __devinit e1000_validate_option(unsigned int *value,
 		BUG();
 	}
 
-	e_info("Invalid %s value specified (%i) %s\n", opt->name, *value,
-	       opt->err);
+	dev_info(pci_dev_to_dev(adapter->pdev),
+		 "Invalid %s value specified (%i) %s\n", opt->name, *value,
+		 opt->err);
 	*value = opt->def;
 	return -1;
 }
@@ -264,17 +256,24 @@ static int __devinit e1000_validate_option(unsigned int *value,
  * value exists, a default value is used.  The final value is stored
  * in a variable in the adapter structure.
  **/
+#ifdef HAVE_CONFIG_HOTPLUG
 void __devinit e1000e_check_options(struct e1000_adapter *adapter)
+#else
+void e1000e_check_options(struct e1000_adapter *adapter)
+#endif
 {
 	struct e1000_hw *hw = &adapter->hw;
 	int bd = adapter->bd_number;
 
 	if (bd >= E1000_MAX_NIC) {
-		e_notice("Warning: no configuration for board #%i\n", bd);
-		e_notice("Using defaults for all values\n");
+		dev_notice(pci_dev_to_dev(adapter->pdev),
+			   "Warning: no configuration for board #%i\n", bd);
+		dev_notice(pci_dev_to_dev(adapter->pdev),
+			   "Using defaults for all values\n");
 	}
 
-	{ /* Transmit Interrupt Delay */
+	/* Transmit Interrupt Delay */
+	{
 		static const struct e1000_option opt = {
 			.type = range_option,
 			.name = "Transmit Interrupt Delay",
@@ -293,7 +292,8 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 			adapter->tx_int_delay = opt.def;
 		}
 	}
-	{ /* Transmit Absolute Interrupt Delay */
+	/* Transmit Absolute Interrupt Delay */
+	{
 		static const struct e1000_option opt = {
 			.type = range_option,
 			.name = "Transmit Absolute Interrupt Delay",
@@ -312,7 +312,8 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 			adapter->tx_abs_int_delay = opt.def;
 		}
 	}
-	{ /* Receive Interrupt Delay */
+	/* Receive Interrupt Delay */
+	{
 		static struct e1000_option opt = {
 			.type = range_option,
 			.name = "Receive Interrupt Delay",
@@ -331,7 +332,8 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 			adapter->rx_int_delay = opt.def;
 		}
 	}
-	{ /* Receive Absolute Interrupt Delay */
+	/* Receive Absolute Interrupt Delay */
+	{
 		static const struct e1000_option opt = {
 			.type = range_option,
 			.name = "Receive Absolute Interrupt Delay",
@@ -350,7 +352,8 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 			adapter->rx_abs_int_delay = opt.def;
 		}
 	}
-	{ /* Interrupt Throttling Rate */
+	/* Interrupt Throttling Rate */
+	{
 		static const struct e1000_option opt = {
 			.type = range_option,
 			.name = "Interrupt Throttling Rate (ints/sec)",
@@ -363,76 +366,116 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 
 		if (num_InterruptThrottleRate > bd) {
 			adapter->itr = InterruptThrottleRate[bd];
-			switch (adapter->itr) {
-			case 0:
-				e_info("%s turned off\n", opt.name);
-				break;
-			case 1:
-				e_info("%s set to dynamic mode\n", opt.name);
-				adapter->itr_setting = adapter->itr;
-				adapter->itr = 20000;
-				break;
-			case 3:
-				e_info("%s set to dynamic conservative mode\n",
-					opt.name);
-				adapter->itr_setting = adapter->itr;
-				adapter->itr = 20000;
-				break;
-			case 4:
-				e_info("%s set to simplified (2000-8000 ints) "
-				       "mode\n", opt.name);
-				adapter->itr_setting = 4;
-				break;
-			default:
-				/*
-				 * Save the setting, because the dynamic bits
-				 * change itr.
-				 */
-				if (e1000_validate_option(&adapter->itr, &opt,
-							  adapter) &&
-				    (adapter->itr == 3)) {
-					/*
-					 * In case of invalid user value,
-					 * default to conservative mode.
-					 */
-					adapter->itr_setting = adapter->itr;
-					adapter->itr = 20000;
-				} else {
-					/*
-					 * Clear the lower two bits because
-					 * they are used as control.
-					 */
-					adapter->itr_setting =
-						adapter->itr & ~3;
-				}
-				break;
-			}
+
+			/* Make sure a message is printed for non-special
+			 * values. And in case of an invalid option, display
+			 * warning, use default and go through itr/itr_setting
+			 * adjustment logic below
+			 */
+			if ((adapter->itr > 4) &&
+			    e1000_validate_option(&adapter->itr, &opt, adapter))
+				adapter->itr = opt.def;
 		} else {
-			adapter->itr_setting = opt.def;
+			/* If no option specified, use default value and go
+			 * through the logic below to adjust itr/itr_setting
+			 */
+			adapter->itr = opt.def;
+
+			/* Make sure a message is printed for non-special
+			 * default values
+			 */
+			if (adapter->itr > 4)
+				dev_info(pci_dev_to_dev(adapter->pdev),
+					 "%s set to default %d\n", opt.name,
+					 adapter->itr);
+		}
+
+		adapter->itr_setting = adapter->itr;
+		switch (adapter->itr) {
+		case 0:
+			dev_info(pci_dev_to_dev(adapter->pdev),
+				 "%s turned off\n", opt.name);
+			break;
+		case 1:
+			dev_info(pci_dev_to_dev(adapter->pdev),
+				 "%s set to dynamic mode\n", opt.name);
 			adapter->itr = 20000;
+			break;
+		case 2:
+			dev_info(pci_dev_to_dev(adapter->pdev),
+				 "%s Invalid mode - setting default\n",
+				 opt.name);
+			adapter->itr_setting = opt.def;
+			/* fall-through */
+		case 3:
+			dev_info(pci_dev_to_dev(adapter->pdev),
+				 "%s set to dynamic conservative mode\n",
+				 opt.name);
+			adapter->itr = 20000;
+			break;
+		case 4:
+			dev_info(pci_dev_to_dev(adapter->pdev),
+				 "%s set to simplified (2000-8000 ints) mode\n",
+				 opt.name);
+			break;
+		default:
+			/* Save the setting, because the dynamic bits
+			 * change itr.
+			 *
+			 * Clear the lower two bits because
+			 * they are used as control.
+			 */
+			adapter->itr_setting &= ~3;
+			break;
 		}
 	}
-#ifdef CONFIG_E1000E_MSIX
-	{ /* Interrupt Mode */
+	/* Interrupt Mode */
+	{
 		static struct e1000_option opt = {
 			.type = range_option,
 			.name = "Interrupt Mode",
-			.err  = "defaulting to 2 (MSI-X)",
-			.def  = E1000E_INT_MODE_MSIX,
-			.arg  = { .r = { .min = MIN_INTMODE,
-					 .max = MAX_INTMODE } }
+#ifndef CONFIG_PCI_MSI
+			.err  = "defaulting to 0 (legacy)",
+			.def  = E1000E_INT_MODE_LEGACY,
+			.arg  = { .r = { .min = 0,
+					 .max = 0 } }
+#endif
 		};
+
+#ifdef CONFIG_PCI_MSI
+		if (adapter->flags & FLAG_HAS_MSIX) {
+			opt.err = kstrdup("defaulting to 2 (MSI-X)",
+					  GFP_KERNEL);
+			opt.def = E1000E_INT_MODE_MSIX;
+			opt.arg.r.max = E1000E_INT_MODE_MSIX;
+		} else {
+			opt.err = kstrdup("defaulting to 1 (MSI)", GFP_KERNEL);
+			opt.def = E1000E_INT_MODE_MSI;
+			opt.arg.r.max = E1000E_INT_MODE_MSI;
+		}
+
+		if (!opt.err) {
+			dev_err(pci_dev_to_dev(adapter->pdev),
+				"Failed to allocate memory\n");
+			return;
+		}
+#endif
 
 		if (num_IntMode > bd) {
 			unsigned int int_mode = IntMode[bd];
+
 			e1000_validate_option(&int_mode, &opt, adapter);
 			adapter->int_mode = int_mode;
 		} else {
 			adapter->int_mode = opt.def;
 		}
+
+#ifdef CONFIG_PCI_MSI
+		kfree(opt.err);
+#endif
 	}
-#endif /* CONFIG_E1000E_MSIX */
-	{ /* Smart Power Down */
+	/* Smart Power Down */
+	{
 		static const struct e1000_option opt = {
 			.type = enable_option,
 			.name = "PHY Smart Power Down",
@@ -442,13 +485,14 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 
 		if (num_SmartPowerDownEnable > bd) {
 			unsigned int spd = SmartPowerDownEnable[bd];
+
 			e1000_validate_option(&spd, &opt, adapter);
-			if ((adapter->flags & FLAG_HAS_SMART_POWER_DOWN)
-			    && spd)
+			if ((adapter->flags & FLAG_HAS_SMART_POWER_DOWN) && spd)
 				adapter->flags |= FLAG_SMART_POWER_DOWN;
 		}
 	}
-	{ /* CRC Stripping */
+	/* CRC Stripping */
+	{
 		static const struct e1000_option opt = {
 			.type = enable_option,
 			.name = "CRC Stripping",
@@ -458,43 +502,49 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 
 		if (num_CrcStripping > bd) {
 			unsigned int crc_stripping = CrcStripping[bd];
+
 			e1000_validate_option(&crc_stripping, &opt, adapter);
-			if (crc_stripping == OPTION_ENABLED)
+			if (crc_stripping == OPTION_ENABLED) {
 				adapter->flags2 |= FLAG2_CRC_STRIPPING;
+				adapter->flags2 |= FLAG2_DFLT_CRC_STRIPPING;
+			}
 		} else {
 			adapter->flags2 |= FLAG2_CRC_STRIPPING;
+			adapter->flags2 |= FLAG2_DFLT_CRC_STRIPPING;
 		}
 	}
-	{ /* Kumeran Lock Loss Workaround */
+	/* Kumeran Lock Loss Workaround */
+	{
 		static const struct e1000_option opt = {
 			.type = enable_option,
 			.name = "Kumeran Lock Loss Workaround",
 			.err  = "defaulting to Enabled",
 			.def  = OPTION_ENABLED
 		};
+		bool enabled = opt.def;
 
 		if (num_KumeranLockLoss > bd) {
 			unsigned int kmrn_lock_loss = KumeranLockLoss[bd];
+
 			e1000_validate_option(&kmrn_lock_loss, &opt, adapter);
-			if (hw->mac.type == e1000_ich8lan)
-				e1000e_set_kmrn_lock_loss_workaround_ich8lan(hw,
-								kmrn_lock_loss);
-		} else {
-			if (hw->mac.type == e1000_ich8lan)
-				e1000e_set_kmrn_lock_loss_workaround_ich8lan(hw,
-								       opt.def);
+			enabled = kmrn_lock_loss;
 		}
+
+		if (hw->mac.type == e1000_ich8lan)
+			e1000e_set_kmrn_lock_loss_workaround_ich8lan(hw,
+								     enabled);
 	}
-	{ /* EEE for parts supporting the feature */
+	/* EEE for parts supporting the feature */
+	{
 		static const struct e1000_option opt = {
 			.type = enable_option,
 			.name = "EEE Support",
-			.err  = "defaulting to Enabled",
+			.err  = "defaulting to Enabled (100T/1000T full)",
 			.def  = OPTION_ENABLED
 		};
 
 		if (adapter->flags2 & FLAG2_HAS_EEE) {
-			/* Currently only supported on 82579 */
+			/* Currently only supported on 82579 and newer */
 			if (num_EEE > bd) {
 				unsigned int eee = EEE[bd];
 				e1000_validate_option(&eee, &opt, adapter);
@@ -504,7 +554,8 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 			}
 		}
 	}
-	{ /* configure node specific allocation */
+	/* configure node specific allocation */
+	{
 		static struct e1000_option opt = {
 			.type = range_option,
 			.name = "Node used to allocate memory",
@@ -522,14 +573,18 @@ void __devinit e1000e_check_options(struct e1000_adapter *adapter)
 		/* if the default was zero then we need to set the
 		 * default value to an online node, which is not
 		 * necessarily zero, and the constant initializer
-		 * above can't take first_online_node */
-		if (node == 0)
+		 * above can't take first_online_node
+		 */
+		if (node == 0) {
 			/* must set opt.def for validate */
-			opt.def = node = first_online_node;
+			node = first_online_node;
+			opt.def = node;
+		}
 
 		if (num_Node > bd) {
 			node = Node[bd];
-			e1000_validate_option((uint *)&node, &opt, adapter);
+			e1000_validate_option((unsigned int *)&node, &opt,
+					      adapter);
 			if (node != OPTION_UNSET)
 				e_info("node used for allocation: %d\n", node);
 		}

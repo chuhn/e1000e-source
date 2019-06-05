@@ -1,3 +1,10 @@
+e1000e (3.4.2.1-1) unstable; urgency=low
+
+  * New upstream version
+  * git versioning
+
+ -- Christopher Huhn <C.Huhn@gsi.de>  Wed, 05 Jun 2019 13:17:00 +0200
+
 e1000e (1.4.4-1) unstable; urgency=low
 
   * New upstream version
@@ -18,7 +25,6 @@ e1000e (0.5.18.3-2) unstable; urgency=low
 
 e1000e (0.5.18.3-1) unstable; urgency=low
 
-  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+  * Initial release
 
  -- Christopher Huhn <c.huhn@gsi.de>  Wed,  3 Jun 2009 11:27:56 +0200
-

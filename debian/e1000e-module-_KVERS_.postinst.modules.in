@@ -16,15 +16,19 @@ set -e
 # the debian-policy package
 
 
+MODULE_FILE="/lib/modules/_KVERS_/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko"
+
+
 case "$1" in
     configure)
 
         dpkg-divert --package e1000e-module-_KVERS_ --add --rename \
-            --divert /lib/modules/_KVERS_/kernel/drivers/net/e1000e/e1000e.ko.pristine \
-            /lib/modules/_KVERS_/kernel/drivers/net/e1000e/e1000e.ko
+            --divert $MODULE_FILE.orig \
+            $MODULE_FILE
 
         depmod -a -F /boot/System.map-_KVERS_ _KVERS_ 
 
+        # 
         grep -i "^BOOT=nfs" /etc/initramfs-tools/initramfs.conf \
             && update-initramfs -u -k _KVERS_
     ;;
@@ -44,5 +48,3 @@ esac
 #DEBHELPER#
 
 exit 0
-
-
