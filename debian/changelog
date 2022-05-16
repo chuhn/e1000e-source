@@ -15,7 +15,7 @@ e1000e (1.2.20-1) unstable; urgency=low
 
   * New upstream version
 
- -- Christopher Huhn <c.huhn.gsi.de>  Tue, 07 Dec 2010 18:09:54 +0100
+ -- Christopher Huhn <c.huhn@gsi.de>  Tue, 07 Dec 2010 18:09:54 +0100
 
 e1000e (0.5.18.3-2) unstable; urgency=low
 
