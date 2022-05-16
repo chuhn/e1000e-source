@@ -1,10 +1,10 @@
 Source: e1000e
 Section: kernel
-Priority: extra
+Priority: optional
 Maintainer: Christopher Huhn <C.Huhn@gsi.de>
-Build-Depends: debhelper (>= 9), bzip2
-Standards-Version: 3.9.8
-Homepage: https://downloadcenter.intel.com/download/15817>
+Build-Depends: debhelper (>= 10), bzip2
+Standards-Version: 4.5.1
+Homepage: https://www.intel.de/content/www/uk/en/download/14611/15817/intel-network-adapter-driver-for-pcie-intel-gigabit-ethernet-network-connections-under-linux.html
 Vcs-Git: https://github.com/chuhn/e1000e-source.git
 Vcs-Browser: https://github.com/chuhn/e1000e-source
 
