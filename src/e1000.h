@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/* Copyright(c) 1999 - 2020 Intel Corporation. */
 
 /* Linux PRO/1000 Ethernet Driver main header file */
 

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/* Copyright(c) 1999 - 2020 Intel Corporation. */
 
 #ifndef _E1000E_ICH8LAN_H_
 #define _E1000E_ICH8LAN_H_
@@ -81,11 +81,12 @@
 #define E1000_FEXTNVM7_DISABLE_PB_READ	0x00040000
 #define E1000_FEXTNVM7_SIDE_CLK_UNGATE	0x00000004
 #define E1000_FEXTNVM7_DISABLE_SMB_PERST	0x00000020
+#define E1000_FEXTNVM8_UNBIND_DPG_FROM_MPHY	0x00000400
 #define E1000_FEXTNVM9_IOSFSB_CLKGATE_DIS	0x00000800
 #define E1000_FEXTNVM9_IOSFSB_CLKREQ_DIS	0x00001000
 #define E1000_FEXTNVM11_DISABLE_PB_READ		0x00000200
 #define E1000_FEXTNVM11_DISABLE_MULR_FIX	0x00002000
-
+#define E1000_FEXTNVM12_DONT_WAK_DPG_CLKREQ	0x00001000
 /* bit24: RXDCTL thresholds granularity: 0 - cache lines, 1 - descriptors */
 #define E1000_RXDCTL_THRESH_UNIT_DESC	0x01000000
 
@@ -284,6 +285,8 @@
 
 /* Proprietary Latency Tolerance Reporting PCI Capability */
 #define E1000_PCI_LTR_CAP_LPT		0xA8
+
+#define E1000_PCI_VENDOR_ID_REGISTER	0x00
 
 #define E1000_PCI_REVISION_ID_REG	0x08
 void e1000e_set_kmrn_lock_loss_workaround_ich8lan(struct e1000_hw *hw,

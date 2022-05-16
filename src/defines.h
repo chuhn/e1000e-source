@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/* Copyright(c) 1999 - 2020 Intel Corporation. */
 
 #ifndef _E1000E_DEFINES_H_
 #define _E1000E_DEFINES_H_
@@ -224,6 +224,8 @@
 #define E1000_STATUS_GIO_MASTER_ENABLE	0x00080000	/* Master request status */
 #define E1000_STATUS_2P5_SKU		0x00001000	/* Val of 2.5GBE SKU strap */
 #define E1000_STATUS_2P5_SKU_OVER	0x00002000	/* Val of 2.5GBE SKU Over */
+#define E1000_STATUS_PCIM_STATE		0x40000000	/* PCIm function state */
+#define PCIM_DMOFF_EXIT_TIMEOUT 100
 
 #define SPEED_2500	2500
 #define HALF_DUPLEX	1
@@ -317,8 +319,8 @@
 #define E1000_RFCTL_NEW_IPV6_EXT_DIS	0x00020000
 
 /* Collision related configuration parameters */
-#define E1000_COLLISION_THRESHOLD	15
 #define E1000_CT_SHIFT			4
+#define E1000_COLLISION_THRESHOLD	15
 #define E1000_COLLISION_DISTANCE	63
 #define E1000_COLD_SHIFT		12
 
@@ -549,6 +551,16 @@
 
 #define E1000_TIMINCA_INCPERIOD_SHIFT	24
 #define E1000_TIMINCA_INCVALUE_MASK	0x00FFFFFF
+
+/* ETQF register bit definitions */
+#define E1000_ETQF_1588			(1 << 30)
+#define E1000_FTQF_VF_BP		0x00008000
+#define E1000_FTQF_1588_TIME_STAMP	0x08000000
+#define E1000_FTQF_MASK			0xF0000000
+#define E1000_FTQF_MASK_PROTO_BP	0x10000000
+/* Immediate Interrupt Rx (A.K.A. Low Latency Interrupt) */
+#define E1000_IMIREXT_CTRL_BP	0x00080000	/* Bypass check of ctrl bits */
+#define E1000_IMIREXT_SIZE_BP	0x00001000	/* Packet size bypass */
 
 /* PCI Express Control */
 #define E1000_GCR_RXD_NO_SNOOP		0x00000001
