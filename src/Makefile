@@ -1,30 +1,5 @@
-################################################################################
-#
-# Intel PRO/1000 Linux driver
-# Copyright(c) 1999 - 2011 Intel Corporation.
-#
-# This program is free software; you can redistribute it and/or modify it
-# under the terms and conditions of the GNU General Public License,
-# version 2, as published by the Free Software Foundation.
-#
-# This program is distributed in the hope it will be useful, but WITHOUT
-# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-# more details.
-#
-# You should have received a copy of the GNU General Public License along with
-# this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-#
-# The full GNU General Public License is included in this distribution in
-# the file called "COPYING".
-#
-# Contact Information:
-# Linux NICS <linux.nics@intel.com>
-# e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
-# Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
-#
-################################################################################
+# SPDX-License-Identifier: GPL-2.0
+# Copyright(c) 1999 - 2018 Intel Corporation.
 
 ###########################################################################
 # Driver files
@@ -83,11 +58,12 @@ endif
 VSP :=  $(KOBJ)/include/generated/utsrelease.h \
         $(KOBJ)/include/linux/utsrelease.h \
         $(KOBJ)/include/linux/version.h \
+        $(KOBJ)/include/generated/uapi/linux/version.h \
         /boot/vmlinuz.version.h
 
 # Config file Search Path
-CSP :=  $(KSRC)/include/generated/autoconf.h \
-        $(KSRC)/include/linux/autoconf.h \
+CSP :=  $(KOBJ)/include/generated/autoconf.h \
+        $(KOBJ)/include/linux/autoconf.h \
         /boot/vmlinuz.autoconf.h
 
 # prune the lists down to only files that exist
@@ -146,7 +122,7 @@ EXTRA_CFLAGS += -DDRIVER_$(shell echo $(DRIVER_NAME) | tr '[a-z]' '[A-Z]')
 EXTRA_CFLAGS += -DDRIVER_NAME=$(DRIVER_NAME)
 EXTRA_CFLAGS += -DDRIVER_NAME_CAPS=$(shell echo $(DRIVER_NAME) | tr '[a-z]' '[A-Z]')
 # standard flags for module builds
-EXTRA_CFLAGS += -DLINUX -D__KERNEL__ -DMODULE -O2 -pipe -Wall
+EXTRA_CFLAGS += -DLINUX -D__KERNEL__ -DMODULE -O2 -pipe -Wall -fno-pie
 EXTRA_CFLAGS += -I$(KSRC)/include -I.
 EXTRA_CFLAGS += $(shell [ -f $(KSRC)/include/linux/modversions.h ] && \
             echo "-DMODVERSIONS -DEXPORT_SYMTAB \
@@ -176,14 +152,50 @@ endif
 KVER_CODE := $(shell $(CC) $(EXTRA_CFLAGS) -E -dM $(VSP) 2>/dev/null |\
 	grep -m 1 LINUX_VERSION_CODE | awk '{ print $$3 }' | sed 's/\"//g')
 
+RHEL_CODE := $(shell $(CC) $(EXTRA_CFLAGS) -E -dM $(VSP) 2>/dev/null |\
+	grep -m 1 RHEL_RELEASE_CODE | awk '{ print $$3 }')
+
+# Determine SLE_LOCALVERSION_CODE for SuSE SLE (needed by kcompat)
+# This assumes SuSE will continue setting CONFIG_LOCALVERSION to the string
+# appended to the stable kernel version on which their kernel is based with
+# additional versioning information (up to 3 numbers) and a kernel type,
+# e.g. CONFIG_LOCALVERSION=-1.2.3-default
+ifeq (1,$(shell ${CC} -E -dM ${CONFIG_FILE} 2> /dev/null |\
+          grep -m 1 CONFIG_SUSE_KERNEL | awk '{ print $$3 }'))
+  LOCALVERSION := $(shell ${CC} -E -dM ${CONFIG_FILE} 2> /dev/null |\
+                    grep -m 1 CONFIG_LOCALVERSION | awk '{ print $$3 }' |\
+                    cut -d'-' -f2)
+  LOCALVER_A := $(shell echo ${LOCALVERSION} | cut -d'.' -f1)
+  LOCALVER_B := $(shell echo ${LOCALVERSION} | cut -d'.' -f2)
+  LOCALVER_C := $(shell echo ${LOCALVERSION} | cut -d'.' -f3)
+  SLE_LOCALVERSION_CODE := $(shell expr ${LOCALVER_A} \* 65536 + \
+                                        0${LOCALVER_B} \* 256 + 0${LOCALVER_C})
+  EXTRA_CFLAGS += -DSLE_LOCALVERSION_CODE=${SLE_LOCALVERSION_CODE}
+endif
+
 # abort the build on kernels older than 2.4.0
 ifneq (1,$(shell [ $(KVER_CODE) -ge 132096 ] && echo 1 || echo 0))
   $(error *** Aborting the build. \
           *** This driver is not supported on kernel versions older than 2.4.0)
 endif
 
+# Use NO_PTP_SUPPORT compile flag to disable IEEE-1588 PTP(documented in README)
+ifneq ($(filter %NO_PTP_SUPPORT,$(CFLAGS_EXTRA)),-DNO_PTP_SUPPORT)
+# Do not attempt to enable PTP on kernels that do not support it
+ifeq (1,$(shell ([ $(KVER_CODE) -ge 196608 ] || [ $(RHEL_CODE) -ge 1540 ]) && echo 1 || echo 0))
+include $(KOBJ)/include/config/auto.conf
+ifdef CONFIG_PTP_1588_CLOCK
+CFILES += ptp.c
+endif # CONFIG_PTP_1588_CLOCK
+endif # kernel version >= 3.0
+endif # NO_PTP_SUPPORT
+
 # set the install path
-INSTDIR := /lib/modules/$(KVER)/kernel/drivers/net/$(DRIVER_NAME)
+ifeq (1,$(shell [ $(KVER_CODE) -lt 197120 ] && echo 1 || echo 0))
+INSTDIR := /lib/modules/$(KVER)/updates/drivers/net/$(DRIVER_NAME)
+else
+INSTDIR := /lib/modules/$(KVER)/updates/drivers/net/ethernet/intel/$(DRIVER_NAME)
+endif
 
 # look for SMP in config.h
 SMP := $(shell $(CC) $(EXTRA_CFLAGS) -E -dM $(CONFIG_FILE) | \
@@ -210,6 +222,14 @@ ifeq ($(SMP),1)
   EXTRA_CFLAGS += -D__SMP__
 endif
 
+# Don't set gcc-i-sys.sh until after our $(shell) invocations of ${CC}
+ifneq ($(wildcard ./gcc-i-sys.sh),)
+GCC_I_SYS := $(shell readlink -f ./gcc-i-sys.sh)
+$(shell chmod +x ${GCC_I_SYS})
+export REAL_CC := ${CC}
+export CC := ${GCC_I_SYS}
+endif
+
 ###########################################################################
 # Kernel Version Specific rules
 
@@ -229,9 +249,9 @@ $(DRIVER_NAME)-objs := $(CFILES:.c=.o)
 else
 default:
 ifeq ($(KOBJ),$(KSRC))
-	$(MAKE) -C $(KSRC) SUBDIRS=$(shell pwd) modules
+	$(MAKE) -C $(KSRC) CC=${CC} SUBDIRS=$(shell pwd) modules
 else
-	$(MAKE) -C $(KSRC) O=$(KOBJ) SUBDIRS=$(shell pwd) modules
+	$(MAKE) -C $(KSRC) CC=${CC} O=$(KOBJ) SUBDIRS=$(shell pwd) modules
 endif
 endif
 
@@ -269,7 +289,7 @@ $(TARGET): $(filter-out $(TARGET), $(CFILES:.c=.o))
 
 $(CFILES:.c=.o): $(HFILES) Makefile
 default:
-	$(MAKE)
+	$(MAKE) CC=${CC}
 
 endif # ifeq (1,$(shell [ $(KVER_CODE) -ge 132352 ] && echo 1 || echo 0))
 
@@ -310,12 +330,12 @@ install: default $(MANFILE).gz
 	find $(INSTALL_MOD_PATH)/lib/modules/$(KVER) -name $(TARGET).gz -exec rm -f {} \; || true
 	install -D -m 644 $(TARGET) $(INSTALL_MOD_PATH)$(INSTDIR)/$(TARGET)
 ifeq (,$(INSTALL_MOD_PATH))
-	/sbin/depmod -a || true
+	/sbin/depmod -a $(KVER) || true
 else
   ifeq ($(DEPVER),1 )
-	/sbin/depmod -r $(INSTALL_MOD_PATH) -a || true
+	/sbin/depmod -r $(INSTALL_MOD_PATH) -a $(KVER) || true
   else
-	/sbin/depmod -b $(INSTALL_MOD_PATH) -a -n $(KVERSION) > /dev/null || true
+	/sbin/depmod -b $(INSTALL_MOD_PATH) -a -n $(KVER) > /dev/null || true
   endif
 endif
 	install -D -m 644 $(MANFILE).gz $(INSTALL_MOD_PATH)$(MANDIR)/man$(MANSECTION)/$(MANFILE).gz
@@ -342,3 +362,5 @@ else
 	$(MAKE) -C $(KSRC) O=$(KOBJ) SUBDIRS=$(shell pwd) clean
 endif
 	rm -rf $(TARGET) $(TARGET:.ko=.o) $(TARGET:.ko=.mod.c) $(TARGET:.ko=.mod.o) $(CFILES:.c=.o) $(MANFILE).gz .*cmd .tmp_versions Module.markers Module.symvers modules.order
+
+.NOTPARALLEL:
