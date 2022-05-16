@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/* Copyright(c) 1999 - 2020 Intel Corporation. */
 
 /* ethtool support for e1000 */
 
@@ -146,6 +146,107 @@ static const char e1000_gstrings_test[][ETH_GSTRING_LEN] = {
 
 #define E1000_TEST_LEN ARRAY_SIZE(e1000_gstrings_test)
 
+#ifdef HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE
+static int e1000_get_link_ksettings(struct net_device *netdev,
+				    struct ethtool_link_ksettings *cmd)
+{
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+	struct e1000_hw *hw = &adapter->hw;
+	u32 speed, supported, advertising;
+
+	if (hw->phy.media_type == e1000_media_type_copper) {
+		supported = (SUPPORTED_10baseT_Half |
+				   SUPPORTED_10baseT_Full |
+				   SUPPORTED_100baseT_Half |
+				   SUPPORTED_100baseT_Full |
+				   SUPPORTED_1000baseT_Full |
+				   SUPPORTED_Autoneg |
+				   SUPPORTED_TP);
+		if (hw->phy.type == e1000_phy_ife)
+			supported &= ~SUPPORTED_1000baseT_Full;
+		advertising = ADVERTISED_TP;
+
+		if (hw->mac.autoneg == 1) {
+			advertising |= ADVERTISED_Autoneg;
+			/* the e1000 autoneg seems to match ethtool nicely */
+			advertising |= hw->phy.autoneg_advertised;
+		}
+
+		cmd->base.port = PORT_TP;
+		cmd->base.phy_address = hw->phy.addr;
+
+	} else {
+		supported   = (SUPPORTED_1000baseT_Full |
+				     SUPPORTED_FIBRE |
+				     SUPPORTED_Autoneg);
+
+		advertising = (ADVERTISED_1000baseT_Full |
+				     ADVERTISED_FIBRE |
+				     ADVERTISED_Autoneg);
+
+		cmd->base.port = PORT_FIBRE;
+	}
+
+	speed = SPEED_UNKNOWN;
+	cmd->base.duplex = DUPLEX_UNKNOWN;
+
+	if (netif_running(netdev)) {
+		if (netif_carrier_ok(netdev)) {
+			speed = adapter->link_speed;
+			cmd->base.duplex = adapter->link_duplex - 1;
+		}
+	} else if (!pm_runtime_suspended((netdev_to_dev(netdev))->parent)) {
+		u32 status = er32(STATUS);
+
+		if (status & E1000_STATUS_LU) {
+			if (status & E1000_STATUS_SPEED_1000)
+				speed = SPEED_1000;
+			else if (status & E1000_STATUS_SPEED_100)
+				speed = SPEED_100;
+			else
+				speed = SPEED_10;
+
+			if (status & E1000_STATUS_FD)
+				cmd->base.duplex = DUPLEX_FULL;
+			else
+				cmd->base.duplex = DUPLEX_HALF;
+		}
+	}
+
+	cmd->base.speed = speed;
+	cmd->base.autoneg = ((hw->phy.media_type == e1000_media_type_fiber) ||
+			     hw->mac.
+			     autoneg) ? AUTONEG_ENABLE : AUTONEG_DISABLE;
+
+#ifdef ETH_TP_MDI_X
+	/* MDI-X => 2; MDI =>1; Invalid =>0 */
+	if (hw->phy.media_type == e1000_media_type_copper &&
+	    netif_carrier_ok(netdev))
+		cmd->base.eth_tp_mdix = hw->phy.is_mdix ?
+		    ETH_TP_MDI_X : ETH_TP_MDI;
+	else
+		cmd->base.eth_tp_mdix = ETH_TP_MDI_INVALID;
+
+#ifdef ETH_TP_MDI_AUTO
+	if (hw->phy.mdix == AUTO_ALL_MODES)
+		cmd->base.eth_tp_mdix_ctrl = ETH_TP_MDI_AUTO;
+	else
+		cmd->base.eth_tp_mdix_ctrl = hw->phy.mdix;
+
+	if (hw->phy.media_type != e1000_media_type_copper)
+		cmd->base.eth_tp_mdix_ctrl = ETH_TP_MDI_INVALID;
+#endif
+#endif /* ETH_TP_MDI_X */
+
+	ethtool_convert_legacy_u32_to_link_mode(cmd->link_modes.supported,
+						supported);
+	ethtool_convert_legacy_u32_to_link_mode(cmd->link_modes.advertising,
+						advertising);
+
+	return 0;
+}
+
+#else /* !HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE */
 static int e1000_get_settings(struct net_device *netdev,
 			      struct ethtool_cmd *ecmd)
 {
@@ -237,6 +338,7 @@ static int e1000_get_settings(struct net_device *netdev,
 #endif /* ETH_TP_MDI_X */
 	return 0;
 }
+#endif /* HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE */
 
 static int e1000_set_spd_dplx(struct e1000_adapter *adapter, u32 spd, u8 dplx)
 {
@@ -293,6 +395,98 @@ err_inval:
 	return -EINVAL;
 }
 
+#ifdef HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE
+static int e1000_set_link_ksettings(struct net_device *netdev,
+				    const struct ethtool_link_ksettings *cmd)
+{
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+	struct e1000_hw *hw = &adapter->hw;
+	int ret_val = 0;
+	u32 advertising;
+
+	ethtool_convert_link_mode_to_legacy_u32(&advertising,
+						cmd->link_modes.advertising);
+
+	pm_runtime_get_sync((netdev_to_dev(netdev))->parent);
+
+	/* When SoL/IDER sessions are active, autoneg/speed/duplex
+	 * cannot be changed
+	 */
+	if (hw->phy.ops.check_reset_block &&
+	    hw->phy.ops.check_reset_block(hw)) {
+		e_err("Cannot change link characteristics when SoL/IDER is active.\n");
+		ret_val = -EINVAL;
+		goto out;
+	}
+
+#ifdef ETH_TP_MDI_AUTO
+	/* MDI setting is only allowed when autoneg enabled because
+	 * some hardware doesn't allow MDI setting when speed or
+	 * duplex is forced.
+	 */
+	if (cmd->base.eth_tp_mdix_ctrl) {
+		if (hw->phy.media_type != e1000_media_type_copper) {
+			ret_val = -EOPNOTSUPP;
+			goto out;
+		}
+
+		if (cmd->base.eth_tp_mdix_ctrl != ETH_TP_MDI_AUTO &&
+		    cmd->base.autoneg != AUTONEG_ENABLE) {
+			e_err("forcing MDI/MDI-X state is not supported when link speed and/or duplex are forced\n");
+			ret_val = -EINVAL;
+			goto out;
+		}
+	}
+#endif /* ETH_TP_MDI_AUTO */
+	while (test_and_set_bit(__E1000_RESETTING, &adapter->state))
+		usleep_range(1000, 2000);
+
+	if (cmd->base.autoneg == AUTONEG_ENABLE) {
+		hw->mac.autoneg = 1;
+		if (hw->phy.media_type == e1000_media_type_fiber)
+			hw->phy.autoneg_advertised = ADVERTISED_1000baseT_Full |
+			    ADVERTISED_FIBRE | ADVERTISED_Autoneg;
+		else
+			hw->phy.autoneg_advertised = advertising |
+			    ADVERTISED_TP | ADVERTISED_Autoneg;
+		advertising = hw->phy.autoneg_advertised;
+		if (adapter->fc_autoneg)
+			hw->fc.requested_mode = e1000_fc_default;
+	} else {
+		u32 speed = cmd->base.speed;
+		/* calling this overrides forced MDI setting */
+		if (e1000_set_spd_dplx(adapter, speed, cmd->base.duplex)) {
+			ret_val = -EINVAL;
+			goto out;
+		}
+	}
+
+#ifdef ETH_TP_MDI_AUTO
+	/* MDI-X => 2; MDI => 1; Auto => 3 */
+	if (cmd->base.eth_tp_mdix_ctrl) {
+		/* fix up the value for auto (3 => 0) as zero is mapped
+		 * internally to auto
+		 */
+		if (cmd->base.eth_tp_mdix_ctrl == ETH_TP_MDI_AUTO)
+			hw->phy.mdix = AUTO_ALL_MODES;
+		else
+			hw->phy.mdix = cmd->base.eth_tp_mdix_ctrl;
+	}
+#endif
+	/* reset the link */
+	if (netif_running(adapter->netdev)) {
+		e1000e_down(adapter, true);
+		e1000e_up(adapter);
+	} else {
+		e1000e_reset(adapter);
+	}
+
+out:
+	pm_runtime_put_sync(netdev->dev.parent);
+	clear_bit(__E1000_RESETTING, &adapter->state);
+	return ret_val;
+}
+#else /* !HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE */
 static int e1000_set_settings(struct net_device *netdev,
 			      struct ethtool_cmd *ecmd)
 {
@@ -330,7 +524,7 @@ static int e1000_set_settings(struct net_device *netdev,
 			goto out;
 		}
 	}
-#endif
+#endif /* ETH_TP_MDI_AUTO */
 	while (test_and_set_bit(__E1000_RESETTING, &adapter->state))
 		usleep_range(1000, 2000);
 
@@ -365,7 +559,7 @@ static int e1000_set_settings(struct net_device *netdev,
 		else
 			hw->phy.mdix = ecmd->eth_tp_mdix_ctrl;
 	}
-#endif
+#endif /* ETH_TP_MDI_AUTO */
 	/* reset the link */
 	if (netif_running(adapter->netdev)) {
 		e1000e_down(adapter, true);
@@ -379,6 +573,7 @@ out:
 	clear_bit(__E1000_RESETTING, &adapter->state);
 	return ret_val;
 }
+#endif /* HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE */
 
 static void e1000_get_pauseparam(struct net_device *netdev,
 				 struct ethtool_pauseparam *pause)
@@ -1058,8 +1253,10 @@ static int e1000_reg_test(struct e1000_adapter *adapter, u64 *data)
 	case e1000_pch2lan:
 	case e1000_pch_lpt:
 	case e1000_pch_spt:
-		/* fall through */
 	case e1000_pch_cnp:
+		/* fall through */
+	case e1000_pch_tgp:
+	case e1000_pch_adp:
 		mask |= BIT(18);
 		break;
 	default:
@@ -1178,7 +1375,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 	/* Disable all the interrupts */
 	ew32(IMC, 0xFFFFFFFF);
 	e1e_flush();
-	usleep_range(10000, 20000);
+	usleep_range(10000, 11000);
 
 	/* Test each interrupt */
 	for (i = 0; i < 10; i++) {
@@ -1210,8 +1407,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 			ew32(IMC, mask);
 			ew32(ICS, mask);
 			e1e_flush();
-			usleep_range(10000, 20000);
-
+			usleep_range(10000, 11000);
 			if (adapter->test_icr & mask) {
 				*data = 3;
 				break;
@@ -1228,8 +1424,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 		ew32(IMS, mask);
 		ew32(ICS, mask);
 		e1e_flush();
-		usleep_range(10000, 20000);
-
+		usleep_range(10000, 11000);
 		if (!(adapter->test_icr & mask)) {
 			*data = 4;
 			break;
@@ -1246,8 +1441,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 			ew32(IMC, ~mask & 0x00007FFF);
 			ew32(ICS, ~mask & 0x00007FFF);
 			e1e_flush();
-			usleep_range(10000, 20000);
-
+			usleep_range(10000, 11000);
 			if (adapter->test_icr) {
 				*data = 5;
 				break;
@@ -1258,7 +1452,7 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 	/* Disable all the interrupts */
 	ew32(IMC, 0xFFFFFFFF);
 	e1e_flush();
-	usleep_range(10000, 20000);
+	usleep_range(10000, 11000);
 
 	/* Unhook test interrupt handler */
 	free_irq(irq, netdev);
@@ -1634,7 +1828,7 @@ static int e1000_set_82571_fiber_loopback(struct e1000_adapter *adapter)
 	 */
 	ew32(SCTL, E1000_SCTL_ENABLE_SERDES_LOOPBACK);
 	e1e_flush();
-	usleep_range(10000, 20000);
+	usleep_range(10000, 11000);
 
 	return 0;
 }
@@ -1725,6 +1919,8 @@ static void e1000_loopback_cleanup(struct e1000_adapter *adapter)
 	switch (hw->mac.type) {
 	case e1000_pch_spt:
 	case e1000_pch_cnp:
+	case e1000_pch_tgp:
+	case e1000_pch_adp:
 		fext_nvm11 = er32(FEXTNVM11);
 		fext_nvm11 &= ~E1000_FEXTNVM11_DISABLE_MULR_FIX;
 		ew32(FEXTNVM11, fext_nvm11);
@@ -1748,7 +1944,7 @@ static void e1000_loopback_cleanup(struct e1000_adapter *adapter)
 		    hw->phy.media_type == e1000_media_type_internal_serdes) {
 			ew32(SCTL, E1000_SCTL_DISABLE_SERDES_LOOPBACK);
 			e1e_flush();
-			usleep_range(10000, 20000);
+			usleep_range(10000, 11000);
 			break;
 		}
 		/* Fall Through */
@@ -2197,6 +2393,8 @@ static int e1000_phys_id(struct net_device *netdev, u32 data)
 	    (hw->mac.type == e1000_pch_lpt) ||
 	    (hw->mac.type == e1000_pch_spt) ||
 	    (hw->mac.type == e1000_pch_cnp) ||
+	    (hw->mac.type == e1000_pch_tgp) ||
+	    (hw->mac.type == e1000_pch_adp) ||
 	    (hw->mac.type == e1000_82583) || (hw->mac.type == e1000_82574)) {
 		if (!adapter->blink_timer.function) {
 			init_timer(&adapter->blink_timer);
@@ -2577,8 +2775,10 @@ static int e1000e_get_ts_info(struct net_device *netdev,
 #endif /* ETHTOOL_GET_TS_INFO */
 
 static const struct ethtool_ops e1000_ethtool_ops = {
+#ifndef HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE
 	.get_settings		= e1000_get_settings,
 	.set_settings		= e1000_set_settings,
+#endif /* HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE */
 	.get_drvinfo		= e1000_get_drvinfo,
 	.get_regs_len		= e1000_get_regs_len,
 	.get_regs		= e1000_get_regs,
@@ -2648,6 +2848,10 @@ static const struct ethtool_ops e1000_ethtool_ops = {
 	.set_eee		= e1000e_set_eee,
 #endif
 #endif /* !HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT */
+#ifdef HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE
+	.get_link_ksettings     = e1000_get_link_ksettings,
+	.set_link_ksettings     = e1000_set_link_ksettings,
+#endif /* HAVE_ETHTOOL_CONVERT_U32_AND_LINK_MODE */
 };
 
 #ifdef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT

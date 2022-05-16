@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2018 Intel Corporation. */
+/* Copyright(c) 1999 - 2020 Intel Corporation. */
 
 #include "e1000.h"
 #include "kcompat.h"
@@ -1418,7 +1418,27 @@ int __kc_pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
 	return 0;
 }
 
-#endif
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(6,7))
+int _kc_pci_wait_for_pending_transaction(struct pci_dev *dev)
+{
+	int i;
+	u16 status;
+
+	/* Wait for Transaction Pending bit clean */
+	for (i = 0; i < 4; i++) {
+		if (i)
+			msleep((1 << (i - 1)) * 100);
+
+		pcie_capability_read_word(dev, PCI_EXP_DEVSTA, &status);
+		if (!(status & PCI_EXP_DEVSTA_TRPND))
+			return 1;
+	}
+
+	return 0;
+}
+#endif /* <RHEL6.7 */
+
+#endif /* <3.12 */
 
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) )
 int __kc_dma_set_mask_and_coherent(struct device *dev, u64 mask)
@@ -1434,6 +1454,49 @@ int __kc_dma_set_mask_and_coherent(struct device *dev, u64 mask)
 		err = dma_set_coherent_mask(dev, mask);
 	return err;
 }
+
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,0))
+static bool _kc_pci_bus_read_dev_vendor_id(struct pci_bus *bus, int devfn,
+					   u32 *l, int crs_timeout)
+{
+	int delay = 1;
+
+	if (pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID, l))
+		return false;
+
+	/* some broken boards return 0 or ~0 if a slot is empty: */
+	if (*l == 0xffffffff || *l == 0x00000000 ||
+	    *l == 0x0000ffff || *l == 0xffff0000)
+		return false;
+
+	/* Configuration request Retry Status */
+	while (*l == 0xffff0001) {
+		if (!crs_timeout)
+			return false;
+
+		msleep(delay);
+		delay *= 2;
+		if (pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID, l))
+			return false;
+		/* Card hasn't responded in 60 seconds?  Must be stuck. */
+		if (delay > crs_timeout) {
+			printk(KERN_WARNING "pci %04x:%02x:%02x.%d: not "
+			       "responding\n", pci_domain_nr(bus),
+			       bus->number, PCI_SLOT(devfn), PCI_FUNC(devfn));
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool _kc_pci_device_is_present(struct pci_dev *pdev)
+{
+	u32 v;
+
+	return _kc_pci_bus_read_dev_vendor_id(pdev->bus, pdev->devfn, &v, 0);
+}
+#endif /* <RHEL7.0 */
 #endif /* 3.13.0 */
 
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,14,0) )
@@ -1762,8 +1825,9 @@ void *__kc_devm_kmemdup(struct device *dev, const void *src, size_t len,
 #endif /* 3.16.0 */
 
 /******************************************************************************/
-#if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) )
-#endif /* 3.17.0 */
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)) && \
+     (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,5)))
+#endif /* <3.17.0 && RHEL_RELEASE_CODE < RHEL7.5 */
 
 /******************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0) )
@@ -1825,7 +1889,8 @@ void __kc_skb_complete_tx_timestamp(struct sk_buff *skb,
 #include <linux/sctp.h>
 #endif
 
-unsigned int __kc_eth_get_headlen(unsigned char *data, unsigned int max_len)
+u32 __kc_eth_get_headlen(const struct net_device __always_unused *dev,
+			 unsigned char *data, unsigned int max_len)
 {
 	union {
 		unsigned char *network;
@@ -2009,6 +2074,104 @@ unsigned int _kc_cpumask_local_spread(unsigned int i, int node)
 #endif
 
 /******************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,3,0))
+#if (!(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,4)) && \
+     !(SLE_VERSION_CODE >= SLE_VERSION(12,2,0)))
+/**
+ * _kc_skb_flow_dissect_flow_keys - parse SKB to fill _kc_flow_keys
+ * @skb: SKB used to fille _kc_flow_keys
+ * @flow: _kc_flow_keys to set with SKB fields
+ * @flags: currently unused flags
+ *
+ * The purpose of using kcompat for this function is so the caller doesn't have
+ * to care about which kernel version they are on, which prevents a larger than
+ * normal #ifdef mess created by using a HAVE_* flag for this case. This is also
+ * done for 4.2 kernels to simplify calling skb_flow_dissect_flow_keys()
+ * because in 4.2 kernels skb_flow_dissect_flow_keys() exists, but only has 2
+ * arguments. Recent kernels have skb_flow_dissect_flow_keys() that has 3
+ * arguments.
+ *
+ * The caller needs to understand that this function was only implemented as a
+ * bare-minimum replacement for recent versions of skb_flow_dissect_flow_keys()
+ * and this function is in no way similar to skb_flow_dissect_flow_keys(). An
+ * example use can be found in the ice driver, specifically ice_arfs.c.
+ *
+ * This function is treated as a whitelist of supported fields the SKB can
+ * parse. If new functionality is added make sure to keep this format (i.e. only
+ * check for fields that are explicity wanted).
+ *
+ * Current whitelist:
+ *
+ * TCPv4, TCPv6, UDPv4, UDPv6
+ *
+ * If any unexpected protocol or other field is found this function memsets the
+ * flow passed in back to 0 and returns false. Otherwise the flow is populated
+ * and returns true.
+ */
+bool
+_kc_skb_flow_dissect_flow_keys(const struct sk_buff *skb,
+			       struct _kc_flow_keys *flow,
+			       unsigned int __always_unused flags)
+{
+	memset(flow, 0, sizeof(*flow));
+
+	flow->basic.n_proto = skb->protocol;
+	switch (flow->basic.n_proto) {
+	case htons(ETH_P_IP):
+		flow->basic.ip_proto = ip_hdr(skb)->protocol;
+		flow->addrs.v4addrs.src = ip_hdr(skb)->saddr;
+		flow->addrs.v4addrs.dst = ip_hdr(skb)->daddr;
+		break;
+	case htons(ETH_P_IPV6):
+		flow->basic.ip_proto = ipv6_hdr(skb)->nexthdr;
+		memcpy(&flow->addrs.v6addrs.src, &ipv6_hdr(skb)->saddr,
+		       sizeof(struct in6_addr));
+		memcpy(&flow->addrs.v6addrs.dst, &ipv6_hdr(skb)->daddr,
+		       sizeof(struct in6_addr));
+		break;
+	default:
+		netdev_dbg(skb->dev,
+			   "%s: Unsupported/unimplemented layer 3 protocol %04x\n",
+			   __func__, htons(flow->basic.n_proto));
+		goto unsupported;
+	}
+
+	switch (flow->basic.ip_proto) {
+	case IPPROTO_TCP:
+		{
+			struct tcphdr *tcph;
+
+			tcph = tcp_hdr(skb);
+			flow->ports.src = tcph->source;
+			flow->ports.dst = tcph->dest;
+			break;
+		}
+	case IPPROTO_UDP:
+		{
+			struct udphdr *udph;
+
+			udph = udp_hdr(skb);
+			flow->ports.src = udph->source;
+			flow->ports.dst = udph->dest;
+			break;
+		}
+	default:
+		netdev_dbg(skb->dev,
+			   "%s: Unsupported/unimplemented layer 4 protocol %02x\n",
+			   __func__, flow->basic.ip_proto);
+		return false;
+	}
+
+	return true;
+
+unsupported:
+	memset(flow, 0, sizeof(*flow));
+	return false;
+}
+#endif /* ! >= RHEL7.4 && ! >= SLES12.2 */
+#endif /* 4.3.0 */
+
+/******************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,5,0) )
 #if (!(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3)))
 #ifdef CONFIG_SPARC
@@ -2056,6 +2219,49 @@ int _kc_eth_platform_get_mac_address(struct device *dev __maybe_unused,
 }
 #endif /* !(RHEL_RELEASE >= 7.3) */
 #endif /* < 4.5.0 */
+
+/*****************************************************************************/
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)) || \
+     (SLE_VERSION_CODE && (SLE_VERSION_CODE <= SLE_VERSION(12,3,0))) || \
+     (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7,5))))
+const char *_kc_phy_speed_to_str(int speed)
+{
+	switch (speed) {
+	case SPEED_10:
+		return "10Mbps";
+	case SPEED_100:
+		return "100Mbps";
+	case SPEED_1000:
+		return "1Gbps";
+	case SPEED_2500:
+		return "2.5Gbps";
+	case SPEED_5000:
+		return "5Gbps";
+	case SPEED_10000:
+		return "10Gbps";
+	case SPEED_14000:
+		return "14Gbps";
+	case SPEED_20000:
+		return "20Gbps";
+	case SPEED_25000:
+		return "25Gbps";
+	case SPEED_40000:
+		return "40Gbps";
+	case SPEED_50000:
+		return "50Gbps";
+	case SPEED_56000:
+		return "56Gbps";
+#ifdef SPEED_100000
+	case SPEED_100000:
+		return "100Gbps";
+#endif
+	case SPEED_UNKNOWN:
+		return "Unknown";
+	default:
+		return "Unsupported (update phy-core.c)";
+	}
+}
+#endif /* (LINUX < 4.14.0) || (SLES <= 12.3.0) || (RHEL <= 7.5) */
 
 /******************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,15,0) )
@@ -2224,3 +2430,129 @@ void _kc_pcie_print_link_status(struct pci_dev *dev)
 			 PCIE_SPEED2STR(speed_cap), width_cap);
 }
 #endif /* 4.17.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,1,0))
+#if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,1)))
+#define HAVE_NDO_FDB_ADD_EXTACK
+#else /* !RHEL || RHEL < 8.1 */
+#ifdef HAVE_TC_SETUP_CLSFLOWER
+#define FLOW_DISSECTOR_MATCH(__rule, __type, __out)				\
+	const struct flow_match *__m = &(__rule)->match;			\
+	struct flow_dissector *__d = (__m)->dissector;				\
+										\
+	(__out)->key = skb_flow_dissector_target(__d, __type, (__m)->key);	\
+	(__out)->mask = skb_flow_dissector_target(__d, __type, (__m)->mask);	\
+
+void flow_rule_match_basic(const struct flow_rule *rule,
+			   struct flow_match_basic *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_BASIC, out);
+}
+
+void flow_rule_match_control(const struct flow_rule *rule,
+			     struct flow_match_control *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_CONTROL, out);
+}
+
+void flow_rule_match_eth_addrs(const struct flow_rule *rule,
+			       struct flow_match_eth_addrs *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_ETH_ADDRS, out);
+}
+
+#ifdef HAVE_TC_FLOWER_ENC
+void flow_rule_match_enc_keyid(const struct flow_rule *rule,
+			       struct flow_match_enc_keyid *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_ENC_KEYID, out);
+}
+
+void flow_rule_match_enc_ports(const struct flow_rule *rule,
+			       struct flow_match_ports *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_ENC_PORTS, out);
+}
+
+void flow_rule_match_enc_control(const struct flow_rule *rule,
+				 struct flow_match_control *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_ENC_CONTROL, out);
+}
+
+void flow_rule_match_enc_ipv4_addrs(const struct flow_rule *rule,
+				    struct flow_match_ipv4_addrs *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS, out);
+}
+
+void flow_rule_match_enc_ipv6_addrs(const struct flow_rule *rule,
+				    struct flow_match_ipv6_addrs *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS, out);
+}
+#endif
+
+#ifndef HAVE_TC_FLOWER_VLAN_IN_TAGS
+void flow_rule_match_vlan(const struct flow_rule *rule,
+			  struct flow_match_vlan *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_VLAN, out);
+}
+#endif
+
+void flow_rule_match_ipv4_addrs(const struct flow_rule *rule,
+				struct flow_match_ipv4_addrs *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_IPV4_ADDRS, out);
+}
+
+void flow_rule_match_ipv6_addrs(const struct flow_rule *rule,
+				struct flow_match_ipv6_addrs *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_IPV6_ADDRS, out);
+}
+
+void flow_rule_match_ports(const struct flow_rule *rule,
+			   struct flow_match_ports *out)
+{
+	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_PORTS, out);
+}
+#endif /* HAVE_TC_SETUP_CLSFLOWER */
+#endif /* !RHEL || RHEL < 8.1 */
+#endif /* 5.1.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,3,0))
+#if (!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,2))))
+#ifdef HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO
+int _kc_flow_block_cb_setup_simple(struct flow_block_offload *f,
+				   struct list_head __always_unused
+				   *driver_list, tc_setup_cb_t * cb,
+				   void *cb_ident, void *cb_priv,
+				   bool ingress_only)
+{
+	if (ingress_only &&
+	    f->binder_type != TCF_BLOCK_BINDER_TYPE_CLSACT_INGRESS)
+		return -EOPNOTSUPP;
+
+	/* Note: Upstream has driver_block_list, but older kernels do not */
+	switch (f->command) {
+	case TC_BLOCK_BIND:
+#ifdef HAVE_TCF_BLOCK_CB_REGISTER_EXTACK
+		return tcf_block_cb_register(f->block, cb, cb_ident, cb_priv,
+					     f->extack);
+#else
+		return tcf_block_cb_register(f->block, cb, cb_ident, cb_priv);
+#endif
+	case TC_BLOCK_UNBIND:
+		tcf_block_cb_unregister(f->block, cb, cb_ident);
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+#endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
+#endif /* !RHEL >= 8.2 */
+#endif /* 5.3.0 */

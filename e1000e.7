@@ -16,7 +16,6 @@ modprobe e1000e [<option>=<VAL1>,<VAL2>,...]
 .SH DESCRIPTION
 This driver is intended for \fB2.4.x\fR and \fB2.6.x\fR kernels. A version of the driver may already be included by your distribution and/or the kernel.org kernel.
 
-This driver includes support for Intel(R) Itanium(R)2-based systems.
 .LP
 This driver is only supported as a loadable module at this time. Intel is not supplying patches against the kernel source to allow for static linking of the drivers.
 
@@ -47,11 +46,6 @@ increased CPU utilization, though it may help throughput in some circumstances.
   and may improve small packet latency. However, this is generally not
   suitable for bulk throughput traffic due to the increased CPU utilization
   of the higher interrupt rate.
-  NOTES:
-  - On 82599, and X540, and X550-based adapters, disabling InterruptThrottleRate
-    will also result in the driver disabling HW RSC.
-  - On 82598-based adapters, disabling InterruptThrottleRate will also
-    result in disabling LRO (Large Receive Offloads).
 .IP
 1 = Setting InterruptThrottleRate to Dynamic mode attempts to moderate
   interrupts per vector while maintaining very low latency. This can
@@ -150,7 +144,7 @@ releases of ICH8 systems.
 .IP
 .B Valid Range: 0-2 (0 = Legacy Int, 1 = MSI and 2 = MSI-X)
 .IP
-IntMode controls allow load time control over the type of interrupt
+IntMode controls the allowed load time control over the type of interrupt
 registered for by the driver. MSI-X is required for multiple queue
 support, and some kernels and combinations of kernel .config options
 will force a lower level of interrupt support.
@@ -164,7 +158,7 @@ Strip the CRC from received packets before sending up the network stack. If
 you have a machine with a BMC enabled but cannot receive IPMI traffic after
 loading or enabling the driver, try disabling this feature.
 .LP
-.B EEE
+.B EEE (Energy Efficient Ethernet)
 .IP
 .B Valid Range: 0-1
 .IP
@@ -172,9 +166,18 @@ loading or enabling the driver, try disabling this feature.
 .IP
 1 = Enables EEE
 .IP
-A link between two EEE-compliant devices will result in periodic bursts of
-data followed by periods where the link is in an idle state. This Low Power
-Idle (LPI) state is supported in both 1 Gbps and 100 Mbps link speeds.
+
+A link between two EEE-compliant devices will result in periodic bursts of data followed by periods where the link is in an idle state. This Low Power Idle (LPI) state is supported at 1 Gbps and 100 Mbps link speeds.
+
+NOTES:
+- EEE support requires auto-negotiation.
+- Both link partners must support EEE.
+- EEE is not supported on all Intel(R) Ethernet Network devices or at all link speeds.
+
+Example:
+
+# ethtool --show-eee <ethX>
+# ethtool --set-eee <ethX> [eee on|off]
 .LP
 .B Node
 .IP
@@ -196,22 +199,26 @@ allocated causing slower memory access and impacting throughput, CPU, or both.
 .LP
 Jumbo Frames support is enabled by changing the Maximum Transmission Unit (MTU) to a value larger than the default value of 1500.
 
-Use the ifconfig command to increase the MTU size. For example, enter the following where <x> is the interface number:
+Use the ifconfig command to increase the MTU size. For example, enter the following where <ethX> is the interface number:
 
-   ifconfig eth<x> mtu 9000 up
+# ifconfig <ethX> mtu 9000 up
+
 Alternatively, you can use the ip command as follows:
-   ip link set mtu 9000 dev eth<x>
-   ip link set up dev eth<x>
+
+# ip link set mtu 9000 dev <ethX>
+# ip link set up dev <ethX>
 
 .LP
 NOTE: The maximum MTU setting for Jumbo Frames is 8996. This value coincides with the maximum Jumbo Frames size of 9018 bytes.
 
 NOTE: Using Jumbo frames at 10 or 100 Mbps is not supported and may result in poor performance or loss of link.
+
+NOTE: Packet loss may have a greater impact on throughput when you use jumbo frames. If you observe a drop in performance after enabling jumbo frames, enabling flow control may mitigate the issue.
 See the section "Jumbo Frames" in the Readme.
 .SH ethtool
 .LP
 The driver utilizes the ethtool interface for driver configuration and diagnostics, as well as displaying statistical information. The latest ethtool version is required for this functionality. Download it at:
-http://ftp.kernel.org/pub/software/network/ethtool/
+https://kernel.org/pub/software/network/ethtool/
 
 
 .SH SPEED AND DUPLEX SETTINGS
@@ -221,7 +228,11 @@ In the default mode, an Intel(R) Ethernet Network Adapter using copper connectio
 
 Speed, duplex, and autonegotiation advertising are configured through the ethtool* utility. ethtool is included with all versions of Red Hat after Red Hat 7.2. For the latest version, download and install ethtool from the following website:
 
-   http://ftp.kernel.org/pub/software/network/ethtool/
+   https://kernel.org/pub/software/network/ethtool/
+
+To see the speed configurations your device supports, run the following:
+
+# ethtool <ethX>
 
 Caution: Only experienced network administrators should force speed and duplex or change autonegotiation advertising manually. The settings at the switch must always match the adapter settings. Adapter performance may suffer or your adapter may not operate if you configure the adapter differently from your switch.
 
@@ -229,7 +240,7 @@ An Intel(R) Ethernet Network Adapter using fiber-based connections, however, wil
 
 .SH NAPI
 .LP
-NAPI (Rx polling mode) is supported in the e1000e driver.
+This driver supports NAPI (Rx polling mode).
 .LP
 To disable NAPI, compile the driver module, passing in a configuration option:
 # make CFLAGS_EXTRA=-DE1000E_NO_NAPI install
@@ -243,6 +254,7 @@ README
 included with the driver.
 For general information, go to the Intel support website at:
 .B http://www.intel.com/support/
+
 .LP
 If an issue is identified with the released source code on a supported kernel with a supported adapter, email the specific information related to the issue to e1000-devel@lists.sf.net.
 .LP
