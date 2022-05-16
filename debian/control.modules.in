@@ -1,0 +1,20 @@
+Source: e1000e
+Section: unknown
+Priority: optional
+Maintainer: Christopher Huhn <c.huhn@gsi.de>
+Build-Depends: debhelper (>= 5)
+Standards-Version: 3.7.2
+
+Package: e1000e-module-_KVERS_
+Architecture: any
+Provides: e1000e-module
+Description: e1000e modules for Linux (kernel _KVERS_).
+ This package contains the set of loadable kernel modules for the
+ <description>.
+ .
+ This package contains the compiled kernel modules for _KVERS_
+ .
+ If you have compiled your own kernel, you will most likely need to build
+ your own e1000e-modules. The e1000e-source package has been
+ provided for use with the Debian's module-assistant or kernel-package
+ utilities to produce a version of e1000e-modules for your kernel.

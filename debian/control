@@ -1,0 +1,14 @@
+Source: e1000e
+Section: unknown
+Priority: extra
+Maintainer: Christopher Huhn <c.huhn@gsi.de>
+Build-Depends: debhelper (>= 5), bzip2
+Standards-Version: 3.7.2
+
+Package: e1000e-source
+Architecture: all
+Depends: module-assistant, debhelper (>= 5), make, bzip2
+Description: Source for the e1000e driver.
+ This package provides the source code for the e1000e kernel modules.
+ The e1000e package is also required in order to make use of these
+ modules. Kernel source or headers are required to compile these modules.

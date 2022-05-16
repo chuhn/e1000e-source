@@ -1,0 +1,23 @@
+e1000e for Debian
+-----------------
+
+Please see ./README for a description of the e1000e software.
+
+The Debian e1000e source package provides two packages,
+
+ 1) e1000e, which the provides the userspace daemon
+ 2) e1000e-source, which provides the source for the kernel modules
+
+The e1000e-source package can be used in several ways,
+
+ - Using the make-kpkg(1) command provided by the kernel-package Debian
+   package. This will produce a corresponding e1000e-modules package for
+   the Debian kernel-image package that you are using. This is "the Debian
+   way". See the "modules_image" section of the make-kpkg(1) man page.
+
+ - Changing to the /usr/src/modules/e1000e/ directory and building as
+   the README file instructs using "make; make install". This will build
+   and install a module specific to the system you are building on and is
+   not under control of the packaging system.
+
+ -- Christopher Huhn <c.huhn@gsi.de>  Wed,  3 Jun 2009 11:27:56 +0200

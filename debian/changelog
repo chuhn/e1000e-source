@@ -1,0 +1,24 @@
+e1000e (1.4.4-1) unstable; urgency=low
+
+  * New upstream version
+
+ -- Christopher Huhn <christo@lxg0123.gsi.de>  Mon, 08 Aug 2011 14:42:13 +0200
+
+e1000e (1.2.20-1) unstable; urgency=low
+
+  * New upstream version
+
+ -- Christopher Huhn <c.huhn.gsi.de>  Tue, 07 Dec 2010 18:09:54 +0100
+
+e1000e (0.5.18.3-2) unstable; urgency=low
+
+  * Invoke depmod for the right kernel version
+
+ -- Christopher Huhn <c.huhn@gsi.de>  Thu,  4 Jun 2009 17:15:54 +0200
+
+e1000e (0.5.18.3-1) unstable; urgency=low
+
+  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+
+ -- Christopher Huhn <c.huhn@gsi.de>  Wed,  3 Jun 2009 11:27:56 +0200
+
