@@ -82,7 +82,7 @@ binary-modules:
 	# Install the module
 	cp e1000e.ko debian/$(PKGNAME)/lib/modules/$(KVERS)/misc
 
-	mkdir debian/$(PKGNAME)/etc/dracut.conf.d
+	mkdir -p debian/$(PKGNAME)/etc/dracut.conf.d
 	echo 'add_drivers+=" e1000e "' > debian/$(PKGNAME)/etc/dracut.conf.d/50-e1000e.conf
 	dh_installdocs
 	dh_installchangelogs
