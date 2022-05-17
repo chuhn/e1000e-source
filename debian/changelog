@@ -1,3 +1,12 @@
+e1000e (3.8.4-2) buster; urgency=medium
+
+  * Not much to say here
+  * .../etc/ might not exists at this moment
+  * Update copyright
+  * Patch away skb_frag_off
+
+ -- Christopher Huhn <C.Huhn@gsi.de>  Tue, 17 May 2022 11:50:34 +0200
+
 e1000e (3.8.4-1) buster; urgency=medium
 
   * Fix mail address
