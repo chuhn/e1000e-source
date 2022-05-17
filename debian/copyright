@@ -3,7 +3,7 @@ Upstream-Name: e1000e
 Source: https://downloadcenter.intel.com/download/15817
 
 Files: *
-Copyright: 1999 - 2016 Intel Corporation
+Copyright: 1999 - 2019 Intel Corporation
 License: GPL-2+
  This package is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -22,4 +22,5 @@ License: GPL-2+
  Public License version 2 can be found in "/usr/share/common-licenses/GPL-2".
 
 Files: debian/*
-Copyright: 2009 - 2019 Christopher Huhn <C.Huhn@gsi.de>
+Copyright: 2009 - 2022 Christopher Huhn <C.Huhn@gsi.de>
+License: GPL-2+
